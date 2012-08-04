@@ -41,11 +41,11 @@ _start:
                             ; file contents to 'buf'
 
     pop     esi             ; argv[2] - listenport
-    call    str2long        ; convert port to long
+    call    port            ; convert port to long
     mov     [lcl_sock], ebx ; set the port on our local socket struct
 
     pop     esi             ; argv[3] - remoteport
-    call    str2long        ; convert port to long
+    call    port            ; convert port to long
     mov     [rem_sock], ebx ; set the port on our remote socket struct
     
     ; create a socket descriptor
@@ -72,27 +72,26 @@ help_and_exit:
 
 exit:
     ; exit the program
-	sys_exit
+    sys_exit
 
-; convert string @ esi to short (word) and place it into ebx
-; destroyed: esi, eax and ebx
-str2long:
-	xor	eax,eax
-	xor	ebx,ebx
-.n1:
-	lodsb
-	sub	al,'0'
-	jb	.n2
-        cmp	al,9
-	ja	.n2
-	imul	ebx,byte 10
-	add	ebx,eax
-	jmps	.n1
-.n2:
+; convert a string representation of a port to a short (word)
+port:
+    xor     eax,eax
+    xor     ebx,ebx
+._port_loop:
+    lodsb
+    sub     al, '0'
+	jb      ._port_end
+    cmp     al, 9
+	ja      ._port_end
+    imul    ebx, byte 10
+    add     ebx, eax
+    jmps    ._port_loop
+._port_end:
     xchg    bh, bl          ; swap values
     shl     ebx, 16         ; 
     mov     bl, AF_INET
-	ret
+    ret
 
 ; open file @ ebx and read contents in to buf
 read_file:
