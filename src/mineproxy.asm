@@ -132,8 +132,8 @@ do_bind:
     mov     edi, eax        ; move socket descriptor
 
     ; check and read information from child processes (clean up, terminate)
-	sys_wait4 0xffffffff, NULL, WNOHANG, NULL
-	sys_wait4
+    sys_wait4 0xffffffff, NULL, WNOHANG, NULL
+    sys_wait4
 
     sys_fork                ; fork the accepted connection as a child
     or      eax, eax        ; check the return value of sys_fork
@@ -199,10 +199,10 @@ section .data:
     bufsize dw  1024
 
 section .bss
-    buf     resb    1024
+    buf         resb    1024
 
-    lcl_sock	resd	4
-    rem_sock	resd	4
+    lcl_sock	resd    4
+    rem_sock	resd    4
 
-    addr_pnt	resb	0x2000
-    addr_len	resb	1
+    addr_pnt	resb    0x2000
+    addr_len	resb    1
