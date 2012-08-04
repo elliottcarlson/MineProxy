@@ -15,78 +15,64 @@
 
 %include "system.inc"
 
-CODESEG
+section .data:
+    _be     db  'Error: Unable to bind to port',__n
+    _be_l   equ $-_be
+    _fe     db  'Error: Unable to read message file',__n
+    _fe_l   equ $-_fe
 
-binderr     db  'Error: Unable to bind to port',__n
-_binderrlen equ $-binderr
-usage       db  'MineProxy Version 1.0, 1 Aug 2012, Copyright (c) 2012 Elliott Carlson',__n,__n
+    _us     db  'MineProxy Version 1.0, Copyright (c) 2012 Elliott Carlson',__n
+            db  __n
             db  'Usage: mineproxy <messagefile> <listenport> <serverport>',__n
-_usagelen   equ $-usage
+    _us_l   equ $-_us
 
-%assign binderrlen _binderrlen
-%assign usagelen _usagelen
+section .text:
+    global _start
 
+_start:
+    pop     ebx             ; argc - get the count of command line arguments
+    cmp     ebx, byte 4     ; compare argc value with 4
+    jne     help_and_exit   ; if argc != 4, jump to 'help_and_exit'
 
-START:
-    ; Grab the command line arguments
-	pop	ebp
-	cmp	ebp, byte 4
-    ; If there are more or less than 3 arguments, exit
-	jne	help_and_exit
-	pop	esi		;argv[0]
+    pop     ebx             ; pop off argv[0] (the program name - discard this)
 
-	pop	esi		;local port
-	call	str2long
-	mov	edi,ebx
+    pop     ebx             ; argv[1] - messagefile
+    call    read_file       ; call subroutine 'read_file', which will add the
+                            ; file contents to 'buf'
 
-	pop	esi
-	call	inet_addr
-	mov     [remsockstruct+4],edx
+    pop     esi             ; argv[2] - listenport
+    call    str2long        ; convert port to long
+    mov     [lcl_sock], ebx ; set the port on our local socket struct
 
-	pop	esi		;remote port
-	call	str2long
-	xchg	bh,bl
-	shl	ebx,16
-	mov	bl,AF_INET	;if (AF_INET > 0xff) mov bx,AF_INET
-	mov     [remsockstruct],ebx
+    pop     esi             ; argv[3] - remoteport
+    call    str2long        ; convert port to long
+    mov     [rem_sock], ebx ; set the port on our remote socket struct
+    
+    ; create a socket descriptor
+	sys_socket PF_INET, SOCK_STREAM, IPPROTO_TCP
+	mov     ebp, eax        ; copy descriptor to ebp
 
-; arguments processed now: create socket, setsockopt reuseddr and
-; proceed to binding
-
-	mov	ebx,edi
-	xchg	bh,bl		;now save port number into bindsock struct
-	shl	ebx,16
-	mov	bl,AF_INET	;if (AF_INET > 0xff) mov bx,AF_INET
-	mov     [sockstruct],ebx
-	
-.begin:
-	sys_socket PF_INET,SOCK_STREAM,IPPROTO_TCP
-	mov	ebp,eax		;socket descriptor
-
-    push byte 0x1
-    mov edi,esp
-	sys_setsockopt ebp,SOL_SOCKET,SO_REUSEADDR,edi,4
-	jmp	do_bind
+    ; set options on the socket descriptor
+	sys_setsockopt ebp, SOL_SOCKET, SO_REUSEADDR, 0x1, 4
+	jmp     do_bind         ; jump to do_bind
 
 bind_error:
-    sys_write STDOUT,binderr,binderrlen
-help_and_exit:                           
-    sys_write STDOUT,usage,usagelen
-	_mov	ebx,1
-real_exit:
-	sys_exit
+    ; display bind error stored in _be
+    sys_write STDOUT, _be, _be_l
+    jmp     help_and_exit 
 
-; convert string @ esi to internet address, place it into edx
-; ruined registers: edi, eax, ebx, edx
-inet_addr:
-	xor	edx,edx
-	mov	ecx,4
-.ipconv:
-	call	str2long
-	mov	dl,bl
-	ror	edx,8
-	loop	.ipconv
-	ret
+file_read_err:
+    ; display file read error stored in _fe
+    sys_write STDOUT, _fe, _fe_l
+
+help_and_exit:                           
+    ; display help/usage stored in _us
+    sys_write STDOUT, _us, _us_l
+	_mov	ebx, 1
+
+exit:
+    ; exit the program
+	sys_exit
 
 ; convert string @ esi to short (word) and place it into ebx
 ; destroyed: esi, eax and ebx
@@ -103,12 +89,42 @@ str2long:
 	add	ebx,eax
 	jmps	.n1
 .n2:
+    xchg    bh, bl          ; swap values
+    shl     ebx, 16         ; 
+    mov     bl, AF_INET
 	ret
+
+; open file @ ebx and read contents in to buf
+read_file:
+    ; open the file
+    mov     eax, 5          ; open(
+    mov     ecx, 0          ;   read-only mode
+    int     80h             ;);
+
+    ; check for errors
+    test    eax, eax        ; test the file descriptor @ eax
+    js      file_read_err   ; if the file descriptor has the sign flag,
+                            ; (less than 0), jump to 'file_read_err'
+
+    ; read the file
+    mov     eax, 3          ; read(
+    mov     ebx, eax        ;   file_descriptor,
+    mov     ecx, buf        ;   *buf,
+    mov     edx, bufsize    ;   *bufsize
+    int     80h             ; );
+
+    test    eax, eax        ; test the file read return value
+    jz      file_read_err   ; got an EOF, jump to 'file_read_err'
+    js      file_read_err   ; got an error, jump to 'file_read_err'
+
+    ret                     ; return from call
+
+
 
 ; main program continues here, we do bind
 
 do_bind:
-	sys_bind ebp,sockstruct,16
+	sys_bind ebp,lcl_sock,16
 ; this is the only place worth error checking
 	or	eax,eax
 	jnz	bind_error
@@ -117,13 +133,13 @@ do_bind:
 ; this should always succeed
 
 ;fork after everything is done and exit main process
-	sys_fork
+;	sys_fork
 	or	eax,eax
 	jz	acceptloop
 
 true_exit:
 	_mov	ebx,0
-	jmps	real_exit
+	jmp 	exit
 
 acceptloop:
 	mov	[structlen],byte 16
@@ -134,6 +150,12 @@ acceptloop:
 
 	sys_wait4	0xffffffff,NULL,WNOHANG,NULL
 	sys_wait4
+
+  ; write to STDOUT
+    mov     eax,  4         ; write(
+    mov     ebx,  1         ;   STDOUT,
+    mov     ecx,  buf       ;   *buf
+    int     80h             ; );
 
 	sys_fork		;we now fork, child goes his own way, daddy goes back to accept
 	or	eax,eax
@@ -152,7 +174,7 @@ acceptloop:
 	sys_socket PF_INET,SOCK_STREAM,IPPROTO_TCP
 	mov	esi,eax		;socket descriptor
 ; now we have to connect that socket to remote host :)
-	sys_connect esi,remsockstruct,16
+	sys_connect esi,rem_sock,16
 	or	eax,eax
 	jz	.goon
 ; if connect failed, @sys_exit automagically kernel closes connection
@@ -183,10 +205,17 @@ UDATASEG
 remoteadd	resd	1
 remoteport	resd	1
 
-sockstruct	resd	4
-remsockstruct	resd	4
+lcl_sock	resd	4
+rem_sock	resd	4
 
 filebuf		resb	0x2000
 
 structlen	resb	1
+
+
+section .data
+   bufsize dw      1024
+
+section .bss
+   buf     resb    1024
 
