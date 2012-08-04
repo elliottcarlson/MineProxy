@@ -49,12 +49,12 @@ _start:
     mov     [rem_sock], ebx ; set the port on our remote socket struct
     
     ; create a socket descriptor
-	sys_socket PF_INET, SOCK_STREAM, IPPROTO_TCP
-	mov     ebp, eax        ; copy descriptor to ebp
+    sys_socket PF_INET, SOCK_STREAM, IPPROTO_TCP
+    mov     ebp, eax        ; copy descriptor to ebp
 
     ; set options on the socket descriptor
-	sys_setsockopt ebp, SOL_SOCKET, SO_REUSEADDR, 0x1, 4
-	jmp     do_bind         ; jump to do_bind
+    sys_setsockopt ebp, SOL_SOCKET, SO_REUSEADDR, 0x1, 4
+    jmp     do_bind         ; jump to do_bind
 
 bind_error:
     ; display bind error stored in _be
@@ -68,7 +68,7 @@ file_read_err:
 help_and_exit:                           
     ; display help/usage stored in _us
     sys_write STDOUT, _us, _us_l
-	_mov	ebx, 1
+    _mov	ebx, 1
 
 exit:
     ; exit the program
