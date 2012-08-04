@@ -106,6 +106,23 @@ read_file:
 
     ret                     ; return from call
 
+strlen:
+    push    ebp             ; save ebp
+    mov     ebp, esp        ; get the passed string
+    push    edi             ; save edi
+    mov     edi, [ebp + 8]  ; get a pointer to the string
+    xor     ecx, ecx        ; 0 out ecx
+    not     ecx             ; flip the bits in ecx (0 becomes 65535)
+    xor     al, al          ; 0 out al
+    cld                     ; clear the direction flag
+    repne   scasb           ; while edi + ecx != al
+    not     ecx             ; flip the bits again to get string length + 1
+    pop     edi             ; restore edi
+    lea     eax, [ecx - 1]  ; subtract 1 from ecx (remove null string)
+    pop     ebp             ; restore ebp
+
+    ret                     ; return from call 
+
 do_bind:
     ; attempt to bind the local socket to the requested port
     sys_bind ebp, lcl_sock, 16
@@ -152,7 +169,13 @@ do_bind:
     or      eax, eax        ; check the return value of sys_connect
     jz      .proxy          ; if it returned 0 (success) jump to '.proxy'
 
-    sys_exit                ; sys_connect failed, exit out
+.minecraft_response:
+    ; unable to connect to remote socket, handle minecraft requests
+    push    buf             ; push the buffered message string to the stack
+    call    strlen          ; call strlen to get the string length
+
+    sys_write edi, buf, eax ; write the buffer to the calling socket 
+    sys_exit                ; exit out
 
 .proxy:
     ; fork again to allow the processes to communicate exclusively with
