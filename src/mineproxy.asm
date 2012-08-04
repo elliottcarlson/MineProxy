@@ -15,17 +15,6 @@
 
 %include "system.inc"
 
-section .data:
-    _be     db  'Error: Unable to bind to port',__n
-    _be_l   equ $-_be
-    _fe     db  'Error: Unable to read message file',__n
-    _fe_l   equ $-_fe
-
-    _us     db  'MineProxy Version 1.0, Copyright (c) 2012 Elliott Carlson',__n
-            db  __n
-            db  'Usage: mineproxy <messagefile> <listenport> <serverport>',__n
-    _us_l   equ $-_us
-
 section .text:
     global _start
 
@@ -76,14 +65,14 @@ exit:
 
 ; convert a string representation of a port to a short (word)
 port:
-    xor     eax,eax
-    xor     ebx,ebx
+    xor     eax, eax        ; set eax to 0 via bitwise xor on itself
+    xor     ebx, ebx        ; set ebx to 0 via bitwise xor on itself
 ._port_loop:
     lodsb
     sub     al, '0'
-	jb      ._port_end
+    jb      ._port_end
     cmp     al, 9
-	ja      ._port_end
+    ja      ._port_end
     imul    ebx, byte 10
     add     ebx, eax
     jmps    ._port_loop
@@ -91,21 +80,20 @@ port:
     xchg    bh, bl          ; swap values
     shl     ebx, 16         ; 
     mov     bl, AF_INET
-    ret
 
-; open file @ ebx and read contents in to buf
+    ret                     ; return from call
+
 read_file:
-    ; open the file
+    ; open the file specifiedin ebx
     mov     eax, 5          ; open(
     mov     ecx, 0          ;   read-only mode
     int     80h             ;);
 
-    ; check for errors
-    test    eax, eax        ; test the file descriptor @ eax
-    js      file_read_err   ; if the file descriptor has the sign flag,
-                            ; (less than 0), jump to 'file_read_err'
+    ; check for error
+    test    eax, eax        ; test the file descriptor
+    js      file_read_err   ; if signed (negative), jump to 'file_read_err'
 
-    ; read the file
+    ; read the file in to 'buf'
     mov     eax, 3          ; read(
     mov     ebx, eax        ;   file_descriptor,
     mov     ecx, buf        ;   *buf,
@@ -118,103 +106,103 @@ read_file:
 
     ret                     ; return from call
 
-
-
-; main program continues here, we do bind
-
 do_bind:
-	sys_bind ebp,lcl_sock,16
-; this is the only place worth error checking
-	or	eax,eax
-	jnz	bind_error
+    ; attempt to bind the local socket to the requested port
+    sys_bind ebp, lcl_sock, 16
+    or      eax, eax        ; bitwise or on eax (to set value of eax in stack)
+    jnz     bind_error      ; if not 0, then there was an error binding
+    sys_listen ebp, 5       ; open the socket for incoming connections
 
-	sys_listen ebp,5		;listen(s, 5)
-; this should always succeed
+;    sys_fork                ; fork the program to a backgorund child process 
+    or      eax, eax        ; check the return value from fork
+    jz      .accept_loop    ; if 0 (success), go in to the accept loop
 
-;fork after everything is done and exit main process
-;	sys_fork
-	or	eax,eax
-	jz	acceptloop
+.process_exit:
+    _mov    bx, 0           ; set return code
+    jmp     exit            ; jump to exit
 
-true_exit:
-	_mov	ebx,0
-	jmp 	exit
+.accept_loop:
+    ; create a pointer to maintain a socket
+    mov	    [addr_len], byte 16
+    ; accept the incoming request using the socket pointer
+    sys_accept ebp, addr_pnt, addr_len
 
-acceptloop:
-	mov	[structlen],byte 16
-	sys_accept ebp,filebuf,structlen
-	test	eax,eax
-	js	acceptloop
-	mov	edi,eax			;our descriptor
+    test    eax, eax        ; test that the socket connected successfully
+    js      .accept_loop    ; if signed (negative), wait for next request
+    mov     edi, eax        ; move socket descriptor
 
-	sys_wait4	0xffffffff,NULL,WNOHANG,NULL
+    ; check and read information from child processes (clean up, terminate)
+	sys_wait4 0xffffffff, NULL, WNOHANG, NULL
 	sys_wait4
 
-  ; write to STDOUT
-    mov     eax,  4         ; write(
-    mov     ebx,  1         ;   STDOUT,
-    mov     ecx,  buf       ;   *buf
-    int     80h             ; );
+    sys_fork                ; fork the accepted connection as a child
+    or      eax, eax        ; check the return value of sys_fork
+    jz      .remote_conn    ; if it returned 0 (success) jump to '.remote_conn'
 
-	sys_fork		;we now fork, child goes his own way, daddy goes back to accept
-	or	eax,eax
-	jz	.childrun
-	sys_close edi
-	_jmp	acceptloop
+    sys_close edi           ; close the connection
+    _jmp    .accept_loop    ; loop back to continue listening for connections
 
-; Child code starts here, source descriptor is in EDI
-; We have to open connection to the darling remote system and
-; proxy data. sounds simple? it sure ain't.
-.childrun:
+.remote_conn:
+    ; create the remote server socket to proxy through
+    sys_socket PF_INET, SOCK_STREAM, IPPROTO_TCP
+    mov     esi, eax        ; get the socket descriptor for the remote system
 
-; at first create a socket, ignoring errors, if there are any
-; we run into them later anyway
-; we run into them later anyway
-	sys_socket PF_INET,SOCK_STREAM,IPPROTO_TCP
-	mov	esi,eax		;socket descriptor
-; now we have to connect that socket to remote host :)
-	sys_connect esi,rem_sock,16
-	or	eax,eax
-	jz	.goon
-; if connect failed, @sys_exit automagically kernel closes connection
-	sys_exit
-.goon:
-; Now the situation is this: EDI = source, ESI = destination :)))
-; What we do is we fork again and each reads from themselves and
-; writes into theother. waste of processes? yes. easy hack? yes!!!
-	sys_fork
-	or	eax,eax
-	jz	.papa
+    ; connect to the socket
+    sys_connect esi, rem_sock, 16
+    or      eax, eax        ; check the return value of sys_connect
+    jz      .proxy          ; if it returned 0 (success) jump to '.proxy'
 
-	xchg	edi,esi	; the child just exchanges the descrptors :)
+    sys_exit                ; sys_connect failed, exit out
 
-.papa:
-	sys_read esi,filebuf,0x2000
-	cmp	eax,0
-	jng	.exit
-	sys_write edi,filebuf,eax
-	jmps	.papa
+.proxy:
+    ; fork again to allow the processes to communicate exclusively with
+    ; each other. this is a waste of process descriptors and should be 
+    ; optimized in the future
+    sys_fork                ; fork the remote connection
+    or      eax, eax        ; check the return value of sys_fork
+    jz      .comms          ; if successful, jump to '.comms'
+
+    xchg    edi, esi        ; exchange the descriptors - see explanation below:
+
+; important to note; esi (source) and edi (destination) are interchangable
+; in this routine - in the 'source' fork, esi refers to itself, and edi to
+; the destination; in the 'destination' fork, esi refers to itself, and edi
+; to the source - this allows bi-directional communication from the two
+; processes
+.comms:
+    ; read from source (esi)
+    sys_read esi, addr_pnt, 0x2000
+    cmp     eax, 0          ; compare sys_read response to 0
+    jng     .exit           ; if the response is 0 or negative, exit
+    
+    ; write to the destination (edi)
+    sys_write edi, addr_pnt, eax
+    jmps    .comms          ; loop the communication process until the
+                            ; connection closes
+
 .exit:
-; shutdown also the other socket, so we'll end up cleaned, no childs hanging
-	sys_shutdown edi,1
-	jmp 	true_exit
+    ; ensure that if we (esi) are closing, that the remote (edi) is closed
+    sys_shutdown edi, 1
+    jmp     .process_exit
 
-UDATASEG
+section .data:
+    _be     db  'Error: Unable to bind to port',__n
+    _be_l   equ $-_be
+    _fe     db  'Error: Unable to read message file',__n
+    _fe_l   equ $-_fe
 
-remoteadd	resd	1
-remoteport	resd	1
+    _us     db  'MineProxy Version 1.0, Copyright (c) 2012 Elliott Carlson',__n
+            db  __n
+            db  'Usage: mineproxy <messagefile> <listenport> <serverport>',__n
+    _us_l   equ $-_us
 
-lcl_sock	resd	4
-rem_sock	resd	4
-
-filebuf		resb	0x2000
-
-structlen	resb	1
-
-
-section .data
-   bufsize dw      1024
+    bufsize dw  1024
 
 section .bss
-   buf     resb    1024
+    buf     resb    1024
 
+    lcl_sock	resd	4
+    rem_sock	resd	4
+
+    addr_pnt	resb	0x2000
+    addr_len	resb	1
