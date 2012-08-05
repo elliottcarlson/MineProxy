@@ -171,11 +171,36 @@ do_bind:
 
 .minecraft_response:
     ; unable to connect to remote socket, handle minecraft requests
-    push    buf             ; push the buffered message string to the stack
-    call    strlen          ; call strlen to get the string length
+    sys_read edi, addr_pnt, 0x01
 
-    sys_write edi, buf, eax ; write the buffer to the calling socket 
-    sys_exit                ; exit out
+    ; check the first byte of the incoming request to determine the request
+    ; check for server list request (0xfe)
+    cmp     word [addr_pnt], 0xfe
+    je      .send_serverlist
+
+    ; check for handshake request (0x02)
+    cmp     word [addr_pnt], 0x02
+    je      .send_message
+
+    ; all other requests are ignored
+    jmp     .exit
+
+.send_serverlist:
+    ; write the server list response out to the socket
+    sys_write edi, _sl, _sl_l
+    jmp     .exit
+
+.send_message:
+
+    jmp     .exit
+
+
+    ; send message to requester
+;    push    buf             ; push the buffered message string to the stack
+;    call    strlen          ; call strlen to get the string length
+
+;    sys_write edi, buf, eax ; write the buffer to the calling socket 
+;    sys_exit                ; exit out
 
 .proxy:
     ; fork again to allow the processes to communicate exclusively with
@@ -209,15 +234,23 @@ do_bind:
     jmp     .process_exit
 
 section .data:
+    ; port binding error message
     _be     db  'Error: Unable to bind to port',__n
     _be_l   equ $-_be
+
+    ; file read error message
     _fe     db  'Error: Unable to read message file',__n
     _fe_l   equ $-_fe
 
+    ; usage message
     _us     db  'MineProxy Version 1.0, Copyright (c) 2012 Elliott Carlson',__n
             db  __n
             db  'Usage: mineproxy <messagefile> <listenport> <serverport>',__n
     _us_l   equ $-_us
+
+    ; server list response
+    _sl     db  0xff, 0x00, 0x26, 0x00, 0x41, 0x00, 0x20, 0x00, 0x4d, 0x00, 0x69, 0x00, 0x6e, 0x00, 0x65, 0x00, 0x63, 0x00, 0x72, 0x00, 0x61, 0x00, 0x66, 0x00, 0x74, 0x00, 0x20, 0x00, 0x53, 0x00, 0x65, 0x00, 0x72, 0x00, 0x76, 0x00, 0x65, 0x00, 0x72, 0x00, 0xa7, 0x00, 0x75, 0x00, 0x6e, 0x00, 0x64, 0x00, 0x65, 0x00, 0x66, 0x00, 0x69, 0x00, 0x6e, 0x00, 0x65, 0x00, 0x64, 0x00, 0xa7, 0x00, 0x75, 0x00, 0x6e, 0x00, 0x64, 0x00, 0x65, 0x00, 0x66, 0x00, 0x69, 0x00, 0x6e, 0x00, 0x65, 0x00, 0x64
+    _sl_l   equ $-_sl
 
     bufsize dw  1024
 
